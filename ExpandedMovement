@@ -1,0 +1,120 @@
+-- Services
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+-- Player setup
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local camera = workspace.CurrentCamera
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+
+-- Movement settings
+local walkSpeed = 16
+local sprintSpeed = 28
+local flySpeed = 300
+local flying = false
+
+-- Track currently held keys
+local keysPressed = {
+	W = false,
+	A = false,
+	S = false,
+	D = false,
+	Space = false,
+	Ctrl = false
+}
+
+-- Velocity object for flight
+local flightVelocity = Instance.new("BodyVelocity")
+flightVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+flightVelocity.P = 1250
+flightVelocity.Velocity = Vector3.zero
+flightVelocity.Name = "FlightVelocity"
+
+-- Refresh character references on respawn
+local function setupCharacter(char)
+	character = char
+	humanoid = character:WaitForChild("Humanoid")
+	rootPart = character:WaitForChild("HumanoidRootPart")
+end
+
+player.CharacterAdded:Connect(setupCharacter)
+
+-- Handle key press events
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+
+	if input.KeyCode == Enum.KeyCode.LeftShift then
+		if humanoid then
+			humanoid.WalkSpeed = sprintSpeed
+		end
+	elseif input.KeyCode == Enum.KeyCode.F then
+		-- Toggle flight mode
+		if humanoid and rootPart then
+			flying = not flying
+			humanoid.PlatformStand = flying
+			if flying then
+				flightVelocity.Parent = rootPart
+			else
+				flightVelocity.Velocity = Vector3.zero
+				flightVelocity.Parent = nil
+			end
+		end
+	elseif input.KeyCode == Enum.KeyCode.W then
+		keysPressed.W = true
+	elseif input.KeyCode == Enum.KeyCode.A then
+		keysPressed.A = true
+	elseif input.KeyCode == Enum.KeyCode.S then
+		keysPressed.S = true
+	elseif input.KeyCode == Enum.KeyCode.D then
+		keysPressed.D = true
+	elseif input.KeyCode == Enum.KeyCode.Space then
+		keysPressed.Space = true
+	elseif input.KeyCode == Enum.KeyCode.LeftControl then
+		keysPressed.Ctrl = true
+	end
+end)
+
+-- Handle key release events
+UserInputService.InputEnded:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.LeftShift then
+		if humanoid then
+			humanoid.WalkSpeed = walkSpeed
+		end
+	elseif input.KeyCode == Enum.KeyCode.W then
+		keysPressed.W = false
+	elseif input.KeyCode == Enum.KeyCode.A then
+		keysPressed.A = false
+	elseif input.KeyCode == Enum.KeyCode.S then
+		keysPressed.S = false
+	elseif input.KeyCode == Enum.KeyCode.D then
+		keysPressed.D = false
+	elseif input.KeyCode == Enum.KeyCode.Space then
+		keysPressed.Space = false
+	elseif input.KeyCode == Enum.KeyCode.LeftControl then
+		keysPressed.Ctrl = false
+	end
+end)
+
+-- Update flight movement each frame
+RunService.RenderStepped:Connect(function()
+	if flying and rootPart and flightVelocity.Parent then
+		local moveDirection = Vector3.zero
+		local camCF = camera.CFrame
+
+		if keysPressed.W then moveDirection += camCF.LookVector end
+		if keysPressed.S then moveDirection -= camCF.LookVector end
+		if keysPressed.A then moveDirection -= camCF.RightVector end
+		if keysPressed.D then moveDirection += camCF.RightVector end
+		if keysPressed.Space then moveDirection += camCF.UpVector end
+		if keysPressed.Ctrl then moveDirection -= camCF.UpVector end
+
+		if moveDirection.Magnitude > 0 then
+			moveDirection = moveDirection.Unit * flySpeed
+		end
+
+		flightVelocity.Velocity = moveDirection
+	end
+end)
