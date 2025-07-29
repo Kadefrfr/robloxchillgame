@@ -1,0 +1,65 @@
+local player = game.Players.LocalPlayer
+
+-- Create and set up the GUI container
+local gui = Instance.new("ScreenGui")
+gui.Name = "StatsGUI"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+-- Create and configure the part counter label
+local partLabel = Instance.new("TextLabel")
+partLabel.Size = UDim2.new(0, 200, 0, 40)
+partLabel.Position = UDim2.new(0, 10, 0, 10)
+partLabel.BackgroundTransparency = 0.5
+partLabel.BackgroundColor3 = Color3.new(0, 0, 0)
+partLabel.TextColor3 = Color3.new(1, 1, 1)
+partLabel.TextScaled = true
+partLabel.Text = "Parts: ..."
+partLabel.Font = Enum.Font.SourceSansBold
+partLabel.Parent = gui
+
+-- Create and configure the FPS counter label
+local fpsLabel = Instance.new("TextLabel")
+fpsLabel.Size = UDim2.new(0, 200, 0, 40)
+fpsLabel.Position = UDim2.new(0, 10, 0, 55)
+fpsLabel.BackgroundTransparency = 0.5
+fpsLabel.BackgroundColor3 = Color3.new(0, 0, 0)
+fpsLabel.TextColor3 = Color3.new(1, 1, 1)
+fpsLabel.TextScaled = true
+fpsLabel.Text = "FPS: ..."
+fpsLabel.Font = Enum.Font.SourceSansBold
+fpsLabel.Parent = gui
+
+-- Function to count all BaseParts in the workspace, excluding anything inside player models
+local function countParts()
+	local total = 0
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		if obj:IsA("BasePart") and not obj:IsDescendantOf(game.Players) then
+			total += 1
+		end
+	end
+	return total
+end
+
+-- Update the part count every 3 seconds
+task.spawn(function()
+	while true do
+		partLabel.Text = "Parts: " .. countParts()
+		wait(3)
+	end
+end)
+
+-- Measure and update FPS every second using RenderStepped
+local RunService = game:GetService("RunService")
+local lastTime = tick()
+local frameCount = 0
+
+RunService.RenderStepped:Connect(function()
+	frameCount += 1
+	local now = tick()
+	if now - lastTime >= 1 then
+		fpsLabel.Text = "FPS: " .. frameCount
+		frameCount = 0
+		lastTime = now
+	end
+end)
