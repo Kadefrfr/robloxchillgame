@@ -1,0 +1,212 @@
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Terrain = workspace.Terrain
+
+-- Configurable world generation settings
+local CHUNK_SIZE = 64
+local VIEW_DISTANCE = 8
+local PART_SIZE = 2
+
+local NOISE_SCALE = 2000
+local HEIGHT_SCALE = 600
+local OCEAN_HEIGHT = -50
+local BEACH_HEIGHT = 10
+
+-- Biome asset container
+local biomeAssets = ReplicatedStorage:WaitForChild("BiomeAssets")
+
+-- Generate a consistent seed using current time
+local function hashString(str)
+	local hash = 0
+	for i = 1, #str do
+		hash = (hash * 31 + string.byte(str, i)) % 1000000007
+	end
+	return hash
+end
+
+local creationTime = tostring(tick())
+local worldSeed = hashString(creationTime)
+math.randomseed(worldSeed)
+print("🌱 World seed:", worldSeed)
+
+-- Chunk tracking
+local loadedChunks = {}
+local activeChunks = {}
+local playerLastChunks = {}
+
+-- Get chunk coordinates from world position
+local function getChunkCoords(position)
+	return math.floor(position.X / CHUNK_SIZE), math.floor(position.Z / CHUNK_SIZE)
+end
+
+-- Generate unique key for chunk lookup
+local function chunkKey(x, z)
+	return x .. "," .. z
+end
+
+-- Place decorations like trees, cacti, or snow piles depending on biome
+local function tryPlaceDecoration(biome, position, material, parent)
+	if material == Enum.Material.Sand then return end -- skip placing on sand
+
+	local chance = math.random()
+	if biome == "plains" and chance < 0.003 then
+		biomeAssets.Tree:Clone():SetPrimaryPartCFrame(CFrame.new(position)).Parent = parent
+	elseif biome == "desert" and chance < 0.002 then
+		biomeAssets.Cactus:Clone():SetPrimaryPartCFrame(CFrame.new(position)).Parent = parent
+	elseif biome == "snow" and chance < 0.02 then
+		biomeAssets.SnowPile:Clone():SetPrimaryPartCFrame(CFrame.new(position)).Parent = parent
+	end
+end
+
+-- Create a chunk at given coordinates
+local function generateChunk(chunkX, chunkZ)
+	local key = chunkKey(chunkX, chunkZ)
+	if loadedChunks[key] then
+		activeChunks[key] = (activeChunks[key] or 0) + 1
+		return
+	end
+
+	local chunkFolder = Instance.new("Folder")
+	chunkFolder.Name = key
+	chunkFolder.Parent = workspace
+
+	for x = 0, (CHUNK_SIZE / PART_SIZE) - 1 do
+		for z = 0, (CHUNK_SIZE / PART_SIZE) - 1 do
+			local worldX = chunkX * CHUNK_SIZE + x * PART_SIZE
+			local worldZ = chunkZ * CHUNK_SIZE + z * PART_SIZE
+
+			-- Elevation noise
+			local baseNoise = math.noise(worldX / NOISE_SCALE, worldZ / NOISE_SCALE)
+			local detailNoise = math.noise(worldX / (NOISE_SCALE / 2), worldZ / (NOISE_SCALE / 2)) * 0.25
+			local height = math.floor(((baseNoise + detailNoise) * HEIGHT_SCALE) / 2) * 2
+
+			-- Determine biome
+			local biomeNoise = math.noise(worldX / 5000, worldZ / 5000)
+			local biome = "plains"
+			if biomeNoise < -0.3 then
+				biome = "desert"
+			elseif biomeNoise > 0.3 then
+				biome = "snow"
+			end
+
+			-- Choose material based on height and biome
+			local material = Enum.Material.Grass
+			if height < OCEAN_HEIGHT or height < BEACH_HEIGHT or biome == "desert" then
+				material = Enum.Material.Sand
+			elseif biome == "snow" and height > 200 then
+				material = Enum.Material.Snow
+			elseif height > 300 then
+				material = Enum.Material.Rock
+			end
+
+			-- Create terrain part
+			local part = Instance.new("Part")
+			part.Size = Vector3.new(PART_SIZE, 2, PART_SIZE)
+			part.Anchored = true
+			part.Position = Vector3.new(worldX, height, worldZ)
+			part.Material = material
+
+			-- Color adjustments for different terrain types
+			if material == Enum.Material.Sand then
+				part.Color = Color3.fromRGB(210, 200, 120)
+			elseif material == Enum.Material.Snow then
+				part.Color = Color3.fromRGB(245, 245, 245)
+			elseif material == Enum.Material.Rock then
+				part.Color = Color3.fromRGB(90, 90, 90)
+			elseif material == Enum.Material.Grass then
+				if biome == "plains" then
+					part.Color = Color3.fromRGB(50, 180, 70)
+				elseif biome == "desert" then
+					part.Color = Color3.fromRGB(180, 170, 100)
+				elseif biome == "snow" then
+					part.Color = Color3.fromRGB(220, 240, 220)
+				end
+			end
+
+			part.Parent = chunkFolder
+
+			-- Fill water above terrain if below sea level
+			if height < OCEAN_HEIGHT then
+				local waterHeight = OCEAN_HEIGHT - height
+				local centerY = height + waterHeight / 2
+				Terrain:FillBlock(
+					CFrame.new(worldX, centerY, worldZ),
+					Vector3.new(PART_SIZE, waterHeight, PART_SIZE),
+					Enum.Material.Water
+				)
+			end
+
+			-- Add biome decorations
+			tryPlaceDecoration(biome, part.Position + Vector3.new(0, part.Size.Y / 2, 0), material, chunkFolder)
+		end
+	end
+
+	loadedChunks[key] = true
+	activeChunks[key] = 1
+	print("🟢 Loaded chunk:", key)
+end
+
+-- Unload chunk when no longer needed
+local function unloadChunk(chunkX, chunkZ)
+	local key = chunkKey(chunkX, chunkZ)
+	if not loadedChunks[key] then return end
+
+	activeChunks[key] -= 1
+	if activeChunks[key] <= 0 then
+		local chunkFolder = workspace:FindFirstChild(key)
+		if chunkFolder then chunkFolder:Destroy() end
+		loadedChunks[key] = nil
+		activeChunks[key] = nil
+		print("🔴 Unloaded chunk:", key)
+	end
+end
+
+-- Load/unload chunks around a player
+local function updatePlayerChunks(player)
+	local character = player.Character
+	if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+
+	local rootPos = character.HumanoidRootPart.Position
+	local centerX, centerZ = getChunkCoords(rootPos)
+	local currentChunks = {}
+
+	for dx = -VIEW_DISTANCE, VIEW_DISTANCE do
+		for dz = -VIEW_DISTANCE, VIEW_DISTANCE do
+			local chunkX, chunkZ = centerX + dx, centerZ + dz
+			local key = chunkKey(chunkX, chunkZ)
+			currentChunks[key] = true
+			generateChunk(chunkX, chunkZ)
+		end
+	end
+
+	local lastChunks = playerLastChunks[player] or {}
+	for key in pairs(lastChunks) do
+		if not currentChunks[key] then
+			local cx, cz = unpack(table.pack(unpack(string.split(key, ","))))
+			unloadChunk(tonumber(cx), tonumber(cz))
+		end
+	end
+
+	playerLastChunks[player] = currentChunks
+end
+
+-- Update chunks for each player every frame
+RunService.Stepped:Connect(function()
+	for _, player in ipairs(Players:GetPlayers()) do
+		updatePlayerChunks(player)
+	end
+end)
+
+-- Clean up chunks when player leaves
+Players.PlayerRemoving:Connect(function(player)
+	local lastChunks = playerLastChunks[player]
+	if lastChunks then
+		for key in pairs(lastChunks) do
+			local cx, cz = unpack(table.pack(unpack(string.split(key, ","))))
+			unloadChunk(tonumber(cx), tonumber(cz))
+		end
+	end
+	playerLastChunks[player] = nil
+end)
